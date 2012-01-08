@@ -21,15 +21,9 @@
     <ClCompile Include="InstaChat.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="x.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="InstaChat.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="x.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -1,17 +1,30 @@
-//*******************************
-//*       InstaChat v0.1        *
-//* Hugo Ribeira                *
-//* 2011 September              *
-//*******************************
+//********************************
+//*       InstaChat v0.3         *
+//* Copyright 2011, Hugo Ribeira *
+//*                              *
+//********************************
 
+//This file is part of InstaChat.
+
+//   InstaChat is free software: you can redistribute it and/or modify
+//   it under the terms of the GNU General Public License as published by
+//   the Free Software Foundation, either version 3 of the License, or
+//   any later version.
+
+//   InstaChat is distributed in the hope that it will be useful,
+//   but WITHOUT ANY WARRANTY; without even the implied warranty of
+//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//   GNU General Public License for more details.
+
+//   You should have received a copy of the GNU General Public License
+//   along with InstaChat.  If not, see <http://www.gnu.org/licenses/>.
 
 //TODO:
 //
 //1-Calibrate Keyboard on startup
 //2-Pick a nick name
 //3-Save preferences on disk
-//5-IP to connect to
-//7-Host blocks until a client connects
+//7-Solve host blocking until a client connects
 
 
 #include <iostream>

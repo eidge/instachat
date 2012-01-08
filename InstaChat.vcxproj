@@ -69,17 +69,11 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="InstaChat.hpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-    </ClInclude>
-    <ClInclude Include="x.h" />
+    <ClInclude Include="InstaChat.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="InstaChat.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
-    </ClCompile>
+    <ClCompile Include="InstaChat.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="x.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

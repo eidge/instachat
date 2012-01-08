@@ -1,3 +1,24 @@
+//********************************
+//*       InstaChat v0.3         *
+//* Copyright 2011, Hugo Ribeira *
+//*                              *
+//********************************
+
+//This file is part of InstaChat.
+
+//   InstaChat is free software: you can redistribute it and/or modify
+//   it under the terms of the GNU General Public License as published by
+//   the Free Software Foundation, either version 3 of the License, or
+//   any later version.
+
+//   InstaChat is distributed in the hope that it will be useful,
+//   but WITHOUT ANY WARRANTY; without even the implied warranty of
+//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//   GNU General Public License for more details.
+
+//   You should have received a copy of the GNU General Public License
+//   along with InstaChat.  If not, see <http://www.gnu.org/licenses/>.
+
 #include "InstaChat.hpp"
 
 using namespace std;
@@ -123,7 +144,7 @@ void Screen::draw_menu_choose_option(int option)
 	refresh();
 }
 
-void Screen::enter(int &cur_y, int &cur_x, int max_y = screen.get_max_y())//Data is definitive
+void Screen::enter(int &cur_y, int &cur_x, int max_y = screen.get_max_y())
 {
 	++cur_y;
 	cur_x = 0;
@@ -131,6 +152,8 @@ void Screen::enter(int &cur_y, int &cur_x, int max_y = screen.get_max_y())//Data
 
 void Screen::backspace(int &cur_y, int &cur_x, int min_y = 0)
 {
+	boost::unique_lock<boost::recursive_mutex> lock(Screen_Mutex);
+
 	if(cur_x < 0)
 		{
 			--cur_y;
@@ -206,95 +229,149 @@ void options()
 //-----------------------------------HOST CLASS------------------------------------//
 
 //---------------------------------TALK METHODS-------------------------------------------//
-void Talk::sender()
-{
-
+void Talk::keyboard_input()
+{	
 	try
 	{
-		int s_buf2[256];
-		size_t s_size2;
-		
-		//Start Connection
+		int c;
+		while(true)
 		{
-			boost::mutex::scoped_lock sr_lock(socketMutex);
-			TalkSocket = &Make_Connection(io, HSerror);
+			c = getch();
+
+			Input_Buf.push_back(c);
+
+			{
+				boost::unique_lock<boost::mutex> lock(client_quitsMutex);
+				if(client_quits)
+					break;
+			}
 		}
-
-		if(HSerror)
-			{
-				screen.clear();
-				screen.print_in_middle("Error Connecting to client.");
-				screen.refresh();
-
-				getch();
-				return;
-			}
-
-		//Connection established, notify main and receiver threads
-		is_connected.notify_all();
-
-		while(!HSerror)
-			{
-				{
-					boost::mutex::scoped_lock sr_lock(send_buf_mutex_dev);
-					has_data.wait(sr_lock);
-					
-					array_copy(s_buf, s_buf2, s_size);
-					
-					s_size2 = s_size;
-					s_size = 0;
-				}
-				
-				{
-					zone2.put(s_buf2[1]);
-					boost::mutex::scoped_lock sr_lock2(socketMutex);
-					TalkSocket->write_some(boost::asio::buffer(s_buf2, s_size2), HSerror); //FIX ME: DATA MIGHT NOT BE SENT COMPLETLY! s_buf2+1 is being sent, why?
-				}
-			
-			}
 	}
 	catch(boost::thread_interrupted &)
 	{
-		if(TalkSocket != 0)
-			{
-				TalkSocket->close();
-				delete TalkSocket;
-			}
-	}
-
-}
-
-void Talk::receiver()
-{
-	//Wait for socket to be connected
-	{
-		boost::unique_lock<boost::mutex> lock(connectedMutex);
-		is_connected.wait(lock);
+	
 	}
 	
-	try
+}
+
+void Talk::operator()()
+{
+	Print_Connecting_Message();
+
+	Make_Connection();
+
+	// For implementing cancel ability
+	//while(!connection_over()){
+	//	if(Input_Buf.available()){
+	//		vector<int> input = Input_Buf.pop_all();
+	//		if(count(input.begin(), input.end(), 27)){
+	//			this->~Talk();
+	//			worker_threads.interrupt_all();
+	//			return;
+	//		}
+	//	}
+	//}
+
+
+	if(bad()){
+		screen.clear();
+		screen.print_in_middle("Error Connecting to client.");
+		screen.refresh();
+
+		getch();
+		return;
+		}
+
+	screen.clear();
+	screen.print_in_middle("Client connected.");
+	screen.refresh();
+
+	boost::this_thread::sleep(boost::posix_time::milliseconds(500)); //Give the user time to read the notice
+	screen.clear();
+
+	//print divisories
+	screen.print(3,0, string(screen.get_max_x(), '*'));
+	screen.print(screen.get_max_y() - 4,0, string(screen.get_max_x(), '*'));
+
+	//Start keyboard input:
+	boost::thread keyboard_thread(boost::bind(&Talk::keyboard_input, this));
+
+	
+	vector<int> input;
+	vector<int> output(256);
+	size_t bytes;
+	bool there_was_work;
+	while(this->good())
 	{
-		int r_buf[256];
-		size_t r_size = 0;
-		
-		//Receiving Half FIXME:
-		while(1)
-		{
-			{
-				boost::unique_lock<boost::mutex> lock(socketMutex);
-				r_size = TalkSocket->available();
-				if(r_size > 255)
-					r_size = 255;
-				r_size = TalkSocket->read_some(boost::asio::buffer(r_buf, r_size), HSerror);
-			}
+		there_was_work = false; //Did anything get sent or received?
+		//Sending Part
+		if(Input_Buf.available()){
+			there_was_work = true;
 
-			{
-				boost::unique_lock<boost::mutex> sr_lock(srMutex);
-				for(size_t i = 0; i < r_size; ++i)
-					{
-
-						switch(char(r_buf[i]))//char does make it, but why does int sent differs from received int?
+			input = Input_Buf.pop_all();
+			bytes = boost::asio::write(*TalkSocket, boost::asio::buffer(input), HSerror); // write() ensures that all data is sent or an error ocurred. Which 
+																				 // would be caught in the following loop iteration.
+			//Sort data and output to screen
+			for(size_t input_char = 0; input_char != bytes/sizeof(int) ; ++input_char){ //bytes / so(int) = number of ints received
+				switch(input.at(input_char))
 						{
+							case ESC:
+								{
+									boost::unique_lock<boost::mutex> lock(client_quitsMutex);
+									client_quits = true;
+								}
+								break;								
+							case ENTER:
+								if(zone3.count() != 0)
+								{
+									const int *zone3buf = zone3.contents();
+
+									for(size_t i = 0; i < zone3.count(); ++i)
+										{						
+											if(zone2.is_full())
+												{
+													vector<int> old_contents(zone2.contents() + zone2.max_x(), zone2.contents() + zone2.count());	
+													zone2.reset();
+													zone2.break_line();		
+													for(vector<int>::const_iterator i = old_contents.begin() + zone2.max_x() ; i != old_contents.end(); ++i) //start printing from line 1
+														{
+															zone2.put(*i);
+														}
+													zone2.clean_line(zone2.max_y() - 1);
+												}
+
+											zone2.put(zone3buf[i]);
+										}
+									zone2.break_line();
+									zone3.clean_zone();
+								}
+								break;
+							case BACKSPACE:
+								zone3.backspace();
+								break;
+							default:
+								zone3.put(input.at(input_char));					
+								break;
+						}
+			}
+		}
+		
+		//Receiving Part:
+		if(bytes = TalkSocket->available()){
+			there_was_work = true;
+
+			boost::asio::read(*TalkSocket, boost::asio::buffer(output, bytes), HSerror);
+
+			//Sort Data and output to screen
+			for(size_t output_char = 0; output_char != bytes/sizeof(int) ; ++output_char){
+				switch(output.at(output_char))
+						{
+							case ESC:
+								{
+									boost::unique_lock<boost::mutex> lock(client_quitsMutex);
+									client_quits = true;
+								}
+								break;	
 							case ENTER:
 								if(zone1.count() != 0)
 								{
@@ -326,113 +403,32 @@ void Talk::receiver()
 								zone1.backspace();
 								break;
 							default:
-								zone1.put(r_buf[i]);			
+								zone1.put(output.at(output_char));			
 								break;
 						}
-					}
-
-				screen.refresh();
 			}
-
-			boost::this_thread::sleep(boost::posix_time::milliseconds(10)); //Prevents cpu overload, I hope
 		}
-	}
-	catch(boost::thread_interrupted &)
-	{
-	
-	}
-	
-}
 
-void Talk::operator()()
-{
-	screen.clear();
-	screen.print_in_middle("Waiting for Client to connect...");
-	screen.refresh();
+		screen.refresh();
 
-	boost::thread_group data_streaming;
-	data_streaming.create_thread(boost::bind(&Talk::sender, this));
-	data_streaming.create_thread(boost::bind(&Talk::receiver, this));
-
-	{
-		boost::unique_lock<boost::mutex> lock(connectedMutex);
-		is_connected.wait(lock); //Wait for client to connect: FIXME: THIS BLOCKS UNTIL A CLIENT CONNECTS!
-	}
-
-	screen.clear();
-	screen.print_in_middle("Client connected.");
-	screen.refresh();
-
-	boost::this_thread::sleep(boost::posix_time::milliseconds(500));
-	screen.clear();
-
-	//print divisories
-	screen.print(3,0, string(screen.get_max_x(), '*'));
-	screen.print(screen.get_max_y() - 4,0, string(screen.get_max_x(), '*'));
-
-	while(true)
-	{
-		//LOCAL IN/OUTPUT
-		
-		int c = getch();
-		//boost::this_thread::sleep(boost::posix_time::milliseconds(10));//Prevent overloading with to much fast input DEV
-		if( !zone3.is_full() || ((c == BACKSPACE || c == ENTER) && !zone3.is_empty()) ) 
-			{
-				{
-					boost::unique_lock<boost::mutex> sr_lock(send_buf_mutex_dev);
-					s_buf[s_size++] = c;
-				}
-
-				if(s_size == 255) //Queue is full, connection problems
-					throw InstaException("Connection interrupted!");
-		
-		
-				has_data.notify_one();
-			}
-
-		if(c == '0')
-			break;
-		
+		bool client_quits_2;
 		{
-			
-			switch(c)
-				{
-					case ENTER:
-						if(zone3.count() != 0)
-						{
-							const int *zone3buf = zone3.contents();
-
-							for(size_t i = 0; i < zone3.count(); ++i)
-								{						
-									if(zone2.is_full())
-										{
-											vector<int> old_contents(zone2.contents() + zone2.max_x(), zone2.contents() + zone2.count());	
-											zone2.reset();
-											zone2.break_line();		
-											for(vector<int>::const_iterator i = old_contents.begin() + zone2.max_x() ; i != old_contents.end(); ++i) //start printing from line 1
-												{
-													zone2.put(*i);
-												}
-											zone2.clean_line(zone2.max_y() - 1);
-										}
-
-									zone2.put(zone3buf[i]);
-								}
-							zone2.break_line();
-							zone3.clean_zone();
-						}
-						break;
-					case BACKSPACE:
-						zone3.backspace();
-						break;
-					default:
-						zone3.put(c);					
-						break;
-				}
+			boost::unique_lock<boost::mutex> lock(client_quitsMutex);
+			client_quits_2 = client_quits;
 		}
+
+		if(client_quits_2){
+			screen.clear();
+			screen.print_in_middle("Chat Terminated.");
+			screen.refresh();
+
+			boost::this_thread::sleep(boost::posix_time::milliseconds(500));
+			break;
+		}
+
+		if(!there_was_work)
+			boost::this_thread::sleep(boost::posix_time::milliseconds(5)); //This hopefully prevents cpu overload
 	}
 
-	data_streaming.interrupt_all(); //DEV MUST INTERRUPT FIRST THE RECEIVING PART OTHERWISE EXCEPTIONS MIGHT BE THROWN!
-	data_streaming.join_all();
-	
+	keyboard_thread.join();
 }

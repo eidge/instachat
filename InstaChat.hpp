@@ -1,3 +1,24 @@
+//********************************
+//*       InstaChat v0.3         *
+//* Copyright 2011, Hugo Ribeira *
+//*                              *
+//********************************
+
+//This file is part of InstaChat.
+
+//   InstaChat is free software: you can redistribute it and/or modify
+//   it under the terms of the GNU General Public License as published by
+//   the Free Software Foundation, either version 3 of the License, or
+//   any later version.
+
+//   InstaChat is distributed in the hope that it will be useful,
+//   but WITHOUT ANY WARRANTY; without even the implied warranty of
+//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//   GNU General Public License for more details.
+
+//   You should have received a copy of the GNU General Public License
+//   along with InstaChat.  If not, see <http://www.gnu.org/licenses/>.
+
 #ifndef WITH_CURSES
 #define WITH_CURSES
 
@@ -5,15 +26,18 @@
 #include <iostream>
 #include <string>
 #include <cstring>
+#include <vector>
+#include <algorithm>
 #include <boost\thread.hpp>
 #include <boost\asio.hpp>
+#include <boost\array.hpp>
 
 class Screen;
 class MonitorVar;
 
 extern Screen screen;
 
-const char ENTER = 13, BACKSPACE = 8;
+const char ENTER = 13, BACKSPACE = 8, ESC = 27;
 const int DEFAULT_PORT = 4445;
 
 const std::string app_name = "InstaChat v0.2";
@@ -66,9 +90,9 @@ class Screen
 		inline void draw_init_screen();
 		int draw_main_menu();
 
-		void print(int y, int x, std::string str, short color = 0) {attron(COLOR_PAIR(color));mvprintw(y, x, "%s", str.c_str());attroff(COLOR_PAIR(color));}
-		void print(int y, int x, int c, short color = 0) {attron(COLOR_PAIR(color)); mvprintw(y, x, "%c", c);attroff(COLOR_PAIR(color));}
-		void print_in_middle(std::string str) {print(max_row/2, (max_col - str.size())/2, str);}
+		void print(int y, int x, std::string str, short color = 0) {boost::unique_lock<boost::recursive_mutex> lock(Screen_Mutex); (COLOR_PAIR(color));mvprintw(y, x, "%s", str.c_str());attroff(COLOR_PAIR(color));}
+		void print(int y, int x, int c, short color = 0) {boost::unique_lock<boost::recursive_mutex> lock(Screen_Mutex); attron(COLOR_PAIR(color)); mvprintw(y, x, "%c", c);attroff(COLOR_PAIR(color));}
+		void print_in_middle(std::string str) {boost::unique_lock<boost::recursive_mutex> lock(Screen_Mutex); print(max_row/2, (max_col - str.size())/2, str);}
 
 		void enter(int &cur_y, int &cur_x, int max_y);
 		void backspace(int &cur_y, int &cur_x, int min_y);
@@ -82,6 +106,7 @@ class Screen
 
 
 	private:
+		boost::recursive_mutex Screen_Mutex;
 		//No copying
 		Screen(const Screen &src);
 
@@ -178,6 +203,29 @@ class ChatZone
 };
 
 
+//------------------------IO Buffer----------------------------//
+class IO_Buffer
+{
+	private:
+		boost::array<int, 256> buffer;
+		size_t current_position;
+
+		boost::mutex buffer_mutex;
+
+	public:
+		IO_Buffer(): current_position(0) {}
+
+		void push_back(int c) 
+			{if(current_position == 256) throw InstaException("Connection Loss");
+			boost::unique_lock<boost::mutex> lock(buffer_mutex); buffer.at(current_position++) = c;}
+
+		std::vector<int> pop_all()
+			{boost::unique_lock<boost::mutex> lock(buffer_mutex); 
+			 std::vector<int> copied_buf(buffer.begin(), buffer.begin() + current_position); 
+			 current_position = 0; return copied_buf;}
+
+		bool available() {boost::unique_lock<boost::mutex> lock(buffer_mutex); return current_position;}
+};
 
 //------------------------Talk Class---------------------------//
 class Talk
@@ -185,22 +233,27 @@ class Talk
 	Talk(const Talk &src); //No copying
 	Talk& operator=(const Talk &src); //No assigning
 
+	bool bad() { return HSerror; }
+	bool good() { return !HSerror; }
+
+	bool client_quits;
+	boost::mutex client_quitsMutex;
+
+	//bool connection_over() {return connection_process_over;} //For implementing ability to cancel connection
+
 	protected:
 		boost::asio::io_service io;
-
-		int s_buf[256];
-		int s_size;
-		boost::mutex srMutex;
-		boost::condition_variable has_data;
-
-		//DEV
-		boost::mutex send_buf_mutex_dev;
 		
-		//\DEV
+		//Status
+		//bool connection_process_over; //For implementing ability to cancel connection
 
-		boost::mutex connectedMutex;
-		boost::condition_variable is_connected;
+		//Comm
+		IO_Buffer Output_Buf;
 
+		//Keyboard Input
+		IO_Buffer Input_Buf;
+
+		//Socket:
 		boost::asio::ip::tcp::socket *TalkSocket;
 		boost::mutex socketMutex;
 		boost::system::error_code HSerror;
@@ -211,20 +264,22 @@ class Talk
 		ChatZone zone3;
 
 		//Methods
-		virtual boost::asio::ip::tcp::socket& Make_Connection(boost::asio::io_service &io, boost::system::error_code &HSerror) = 0;
+		virtual void Make_Connection() = 0;
+		virtual void Print_Connecting_Message() = 0;
 
 		void array_copy(const int *arr_src, int *arr_dest, size_t arr_size) 
 			{for(size_t i = 0; i < arr_size; ++i) *(arr_dest + i) = *(arr_src + i);}
 
 		//Thread Functions
-		void sender();
-		void receiver();
+		void keyboard_input();
 		
 
 	public:
-		Talk(): s_size(0), zone1(&screen, 0, 3, screen.get_max_x() * 3),
+		Talk(): zone1(&screen, 0, 3, screen.get_max_x() * 3), client_quits(false), /*connection_process_over(0),*/
 				zone2(&screen, 4, screen.get_max_y() - 4, screen.get_max_x() * (screen.get_max_y() - 4 - 4)), TalkSocket(0),
 				zone3(&screen, screen.get_max_y() - 3, screen.get_max_y(), screen.get_max_x() * 3) {}
+		
+		virtual ~Talk() { if(TalkSocket) {if(TalkSocket->is_open())TalkSocket->close(); delete TalkSocket;} }
 				
 		void operator()(); //Main Thread
 };
@@ -232,22 +287,36 @@ class Talk
 //--------------------------------Host Class---------------------------------------//
 class Host : public Talk
 {
-	boost::asio::ip::tcp::socket& Make_Connection(boost::asio::io_service &io, boost::system::error_code &HSerror)
+	void Make_Connection()
 		{
+			boost::unique_lock<boost::mutex> lock(socketMutex);
+
 			boost::asio::ip::tcp::socket *HostSocket = new boost::asio::ip::tcp::socket(io);
 			boost::asio::ip::tcp::acceptor acceptor(io, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), DEFAULT_PORT));
 
 			acceptor.accept(*HostSocket, HSerror);
 
-			return *HostSocket;
+			TalkSocket = HostSocket;
+
+			//connection_process_over = true; //For implementing ability to cancel connection
+		}
+
+	virtual void Print_Connecting_Message()
+		{
+			screen.clear();
+			screen.print_in_middle("Waiting for Client to connect...");
+			screen.print(screen.get_max_y() - 1, 0 , "(Press Escape to Cancel)", 1);
+			screen.refresh();
 		}
 };
 
 //--------------------------------Client Class------------------------------------//
 class Client : public Talk
 {
-		boost::asio::ip::tcp::socket& Make_Connection(boost::asio::io_service &io, boost::system::error_code &HSerror)
+		void Make_Connection()
 		{
+			boost::unique_lock<boost::mutex> lock(socketMutex);
+
 			boost::asio::ip::tcp::socket *HostSocket = new boost::asio::ip::tcp::socket(io);
 			boost::asio::ip::tcp::resolver resolver(io);
 			std::string ip = get_ip();
@@ -256,7 +325,11 @@ class Client : public Talk
 
 			boost::asio::connect(*HostSocket, iterator, HSerror);
 
-			return *HostSocket;
+			TalkSocket = HostSocket;
+
+
+			//connection_process_over = true;
+
 		}
 
 		std::string get_ip()
@@ -296,6 +369,11 @@ class Client : public Talk
 
 			return ip;
 				
+		}
+
+	virtual void Print_Connecting_Message()
+		{
+			return;
 		}
 };
 
