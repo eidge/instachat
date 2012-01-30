@@ -40,7 +40,7 @@ extern Screen screen;
 const char ENTER = 13, BACKSPACE = 8, ESC = 27;
 const int DEFAULT_PORT = 4445;
 
-const std::string app_name = "InstaChat v0.2";
+const std::string app_name = "InstaChat v0.3";
 const std::string opt_1 = "1 - Connect";
 const std::string opt_2 = "2 - Host";
 const std::string opt_3 = "3 - Options";
