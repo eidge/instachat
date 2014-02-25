@@ -1,3 +1,7 @@
+Provided as is, written a long time ago.
+
+== ORIGINAL README
+
 InstaChat is experimental unfinished software. 
 
 This software is being made with the sole purpose of learning, my c++ skills are not spectacular, as there subjects that I'm just now touching like inheritance and virtual functions and other that I haven't even touched like templates.
